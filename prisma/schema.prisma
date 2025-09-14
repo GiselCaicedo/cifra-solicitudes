@@ -1,0 +1,67 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Rol {
+  id       Int       @id @default(autoincrement())
+  nombre   String    @unique // 'cliente' | 'soporte' | 'admin'
+  usuarios Usuario[]
+}
+
+model Usuario {
+  id       Int    @id @default(autoincrement())
+  email    String @unique
+  password String
+  nombre   String
+  rolId    Int
+  rol      Rol    @relation(fields: [rolId], references: [id])
+
+  // Lado opuesto del cliente en Solicitud
+  solicitudes Solicitud[] @relation("SolicitudesCliente")
+
+  // NUEVO: lado opuesto del soporte en Solicitud
+  solicitudesAsignadas Solicitud[] @relation("SolicitudesSoporte")
+
+  // NUEVO: lado opuesto del autor en HistorialCambio
+  cambiosRealizados HistorialCambio[] @relation("AutorHistorial")
+}
+
+model Solicitud {
+  id          Int    @id @default(autoincrement())
+  titulo      String
+  descripcion String
+  estado      String // 'abierta' | 'en_proceso' | 'cerrada'
+
+  // Cliente (ya estaba bien, con nombre de relación)
+  clienteId Int
+  cliente   Usuario @relation("SolicitudesCliente", fields: [clienteId], references: [id])
+
+  // Soporte (añadimos nombre de relación y haremos el espejo en Usuario)
+  soporteId Int?
+  soporte   Usuario? @relation("SolicitudesSoporte", fields: [soporteId], references: [id])
+
+  respuesta     String?
+  creadoEn      DateTime          @default(now())
+  actualizadoEn DateTime          @updatedAt
+  historial     HistorialCambio[]
+}
+
+model HistorialCambio {
+  id          Int       @id @default(autoincrement())
+  solicitudId Int
+  solicitud   Solicitud @relation(fields: [solicitudId], references: [id])
+
+  campo         String
+  valorAnterior String?
+  valorNuevo    String?
+  fecha         DateTime @default(now())
+
+  // Autor (añadimos nombre de relación y haremos el espejo en Usuario)
+  autorId Int
+  autor   Usuario @relation("AutorHistorial", fields: [autorId], references: [id])
+}
