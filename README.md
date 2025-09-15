@@ -148,22 +148,38 @@ La aplicación simula un entorno real de soporte técnico con funcionalidades av
 
 1. **Como Cliente** (`giselcaicedosoler@gmail.com`):
    - Crear nueva solicitud
-   - Ver historial de cambios
+<img width="1860" height="634" alt="image" src="https://github.com/user-attachments/assets/2556bb5c-f131-4b36-8a30-8922c282b784" />
+
+   - Acceder al chat
+     
+<img width="1043" height="936" alt="image" src="https://github.com/user-attachments/assets/cf9bffaa-b34f-4e4a-8e05-c4db9747ff42" />
+
 
 2. **Como Soporte** (`soporte1@cifra.test`):
    - Tomar ticket sin asignar
-   - Añadir respuesta (auto-asignación)
+   
+<img width="1891" height="921" alt="image" src="https://github.com/user-attachments/assets/2a62eece-40bd-4306-9baf-4cf834242ece" />
+
+   - Añadir respuesta (puede hacer uso de la IA)
+<img width="377" height="291" alt="image" src="https://github.com/user-attachments/assets/c479faf1-c33b-41d0-8e03-70924f1924d9" />
+
    - Cambiar estado a "en proceso"
 
 3. **Como Admin** (`admin@cifra.test`):
    - Ver todas las solicitudes
    - Reasignar ticket a otro soporte
-   - Cerrar solicitud
+
+<img width="361" height="306" alt="image" src="https://github.com/user-attachments/assets/caba45b5-588d-416c-9891-94fe206fa507" />
+
+   - Cambiar estado solicitud
    - Revisar reportes y métricas
+   
+<img width="1643" height="119" alt="image" src="https://github.com/user-attachments/assets/2bb55ede-c67b-49c6-ae63-b1f70a989078" />
 
 4. **Verificaciones**:
    - Historial de cambios completo
-   - Notificaciones por email (si configurado)
+   - Notificaciones por email (si configurado para el correo del cliente, mi correo)
+<img width="1063" height="683" alt="image" src="https://github.com/user-attachments/assets/eb7c8d85-3022-493f-8b91-e77ed62fdf42" />
    - Sugerencias de IA en respuestas
 
 ---
@@ -221,4 +237,5 @@ cifra-solicitudes/
 Para dudas sobre el proyecto:
 - **Email**: giselcaicedosoler@gmail.com
 - **GitHub**: [cifra-solicitudes](https://github.com/giselcaicedo/cifra-solicitudes)
+- **Documentación**: [CIFRA-Prueba](https://github.com/user-attachments/files/22330730/CIFRA-Prueba.pdf)
 
