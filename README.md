@@ -221,4 +221,5 @@ cifra-solicitudes/
 Para dudas sobre el proyecto:
 - **Email**: giselcaicedosoler@gmail.com
 - **GitHub**: [cifra-solicitudes](https://github.com/giselcaicedo/cifra-solicitudes)
+- **Documentación**: [CIFRA-Prueba](https://github.com/user-attachments/files/22330730/CIFRA-Prueba.pdf)
 
