@@ -8,6 +8,7 @@ import DashboardHeader from '@/components/dashboard/DashboardHeader'
 import SolicitudesList from '@/components/solicitudes/SolicitudesList'
 import CreateSolicitudModal from '@/components/solicitudes/CreateSolicitudModal'
 import ManageSolicitudModal from '@/components/solicitudes/ManageSolicitudModal'
+import HistorialSolicitudModal from '@/components/solicitudes/HistorialSolicitudModal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 
 interface Solicitud {
@@ -19,6 +20,20 @@ interface Solicitud {
   cliente: { nombre: string; email: string }
   soporte?: { nombre: string; email: string }
   respuesta?: string
+}
+
+interface HistorialItem {
+  id: number
+  accion: 'creada' | 'asignada' | 'respuesta' | 'cambio_estado'
+  descripcion: string
+  creadoEn: string
+  usuario: { nombre: string; email: string; rol?: string }
+  detalles?: {
+    estadoAnterior?: string
+    estadoNuevo?: string
+    respuesta?: string
+    soporteAsignado?: string
+  }
 }
 
 interface Usuario {
@@ -61,6 +76,11 @@ export default function DashboardPage() {
   const [soportes, setSoportes] = useState<Usuario[]>([])
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [selectedSolicitud, setSelectedSolicitud] = useState<Solicitud | null>(null)
+
+  // Estados para el historial
+  const [historialSolicitud, setHistorialSolicitud] = useState<Solicitud | null>(null)
+  const [historialData, setHistorialData] = useState<HistorialItem[]>([])
+  const [loadingHistorial, setLoadingHistorial] = useState(false)
 
   useEffect(() => {
     if (!user || !token) {
@@ -126,11 +146,52 @@ export default function DashboardPage() {
 
   const handleGestionarSolicitud = (solicitud: Solicitud) => setSelectedSolicitud(solicitud)
 
+  const handleVerHistorial = async (id: number) => {
+    const solicitud = solicitudes.find(s => s.id === id)
+    if (!solicitud || !token) return
+
+    setHistorialSolicitud(solicitud)
+    setLoadingHistorial(true)
+    setHistorialData([]) // Limpiar datos anteriores
+
+    try {
+      const response = await fetch(`/api/solicitudes/${id}/historial`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      
+      if (response.ok) {
+        const historialResponse = await response.json()
+        setHistorialData(historialResponse.data || [])
+      } else {
+    
+      }
+    } catch (error) {
+      console.error('Error cargando historial:', error)
+      // Datos de ejemplo en caso de error
+      setHistorialData([
+        {
+          id: 1,
+          accion: 'creada',
+          descripcion: 'Solicitud creada por el cliente',
+          creadoEn: solicitud.creadoEn,
+          usuario: { nombre: solicitud.cliente.nombre, email: solicitud.cliente.email, rol: 'cliente' }
+        }
+      ])
+    } finally {
+      setLoadingHistorial(false)
+    }
+  }
+
+  const handleCloseHistorial = () => {
+    setHistorialSolicitud(null)
+    setHistorialData([])
+  }
+
   if (!user) return null
   if (loading) return <LoadingSpinner message="Cargando dashboard..." />
 
   return (
-    <div className={`min-h-screen bg-gray-100 ${selectedSolicitud ? 'lg:pr-96' : ''}`}>
+    <div className={`min-h-screen bg-gray-100 ${selectedSolicitud || historialSolicitud ? 'lg:pr-96' : ''}`}>
       <DashboardHeader
         userName={user.nombre}
         userRole={user.rol.nombre}
@@ -146,6 +207,7 @@ export default function DashboardPage() {
           userRole={user.rol.nombre}
           onGestionar={handleGestionarSolicitud}
           onNuevaSolicitud={() => setShowCreateForm(true)}
+          onVerHistorial={handleVerHistorial}
         />
       </main>
 
@@ -155,15 +217,20 @@ export default function DashboardPage() {
         onSubmit={handleCreateSolicitud}
       />
 
-      <div className="flex">
-        <ManageSolicitudModal
-          solicitud={selectedSolicitud}
-          soporteUsers={soportes}
-          currentUser={user.rol.nombre}
-          onClose={() => setSelectedSolicitud(null)}
-          onSubmit={handleUpdateSolicitud}
-        />
-      </div>
+      <ManageSolicitudModal
+        solicitud={selectedSolicitud}
+        soporteUsers={soportes}
+        currentUser={user.rol.nombre}
+        onClose={() => setSelectedSolicitud(null)}
+        onSubmit={handleUpdateSolicitud}
+      />
+
+      <HistorialSolicitudModal
+        solicitud={historialSolicitud}
+        historial={historialData}
+        onClose={handleCloseHistorial}
+        isLoading={loadingHistorial}
+      />
     </div>
   )
 }

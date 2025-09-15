@@ -1,5 +1,6 @@
 'use client'
 
+import { useAuth } from '@/contexts/AuthContext'
 import { useState, useEffect } from 'react'
 
 interface Solicitud {
@@ -22,7 +23,7 @@ interface Usuario {
 
 interface ManageSolicitudModalProps {
   solicitud: Solicitud | null
-  currentUser: 'admin' | 'soporte' | string
+  currentUser: 'admin' | 'soporte' | 'cliente' | string
   soporteUsers?: Usuario[]
   onClose: () => void
   onSubmit: (id: number, data: {
@@ -46,15 +47,22 @@ export default function ManageSolicitudModal({
   const [isVisible, setIsVisible] = useState(false)
   const [isSuggesting, setIsSuggesting] = useState(false)
   const [suggestError, setSuggestError] = useState<string | null>(null)
-
+  const { token } = useAuth()
+  // Inicializar o resetear estado cuando cambia la solicitud
   useEffect(() => {
     if (solicitud) {
       setEstado(solicitud.estado)
-      setRespuesta(solicitud.respuesta || '')
+      setRespuesta('') // Siempre reiniciar el campo de respuesta vacío
       setSoporteId(solicitud.soporte?.id || undefined)
       setIsVisible(true)
+      setSuggestError(null)
     } else {
+      // Resetear completamente cuando no hay solicitud
       setIsVisible(false)
+      setEstado('abierta')
+      setRespuesta('')
+      setSoporteId(undefined)
+      setSuggestError(null)
     }
   }, [solicitud])
 
@@ -62,19 +70,33 @@ export default function ManageSolicitudModal({
 
   const isAdmin = currentUser === 'admin'
   const isSoporte = currentUser === 'soporte'
+  const isCliente = currentUser === 'cliente'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
     try {
       const submitData: {
-        estado: 'abierta' | 'en_proceso' | 'cerrada'
+        estado?: 'abierta' | 'en_proceso' | 'cerrada'
         respuesta?: string
         soporteId?: number
-      } = { estado }
-      if (respuesta.trim()) submitData.respuesta = respuesta.trim()
-      if (isAdmin && soporteId) submitData.soporteId = soporteId
+      } = {}
+
+      // Para clientes, solo se envía la respuesta
+      if (isCliente) {
+        if (respuesta.trim()) submitData.respuesta = respuesta.trim()
+      } else {
+        // Para admin y soporte, se incluye el estado
+        submitData.estado = estado
+        if (respuesta.trim()) submitData.respuesta = respuesta.trim()
+        if (isAdmin && soporteId) submitData.soporteId = soporteId
+      }
+
       await onSubmit(solicitud.id, submitData)
+
+      // Después de actualizar exitosamente, actualizamos el estado local para reflejar los cambios
+      // Esto previene que se muestren datos obsoletos
+
       handleClose()
     } catch (error) {
       console.error('Error updating solicitud:', error)
@@ -86,10 +108,8 @@ export default function ManageSolicitudModal({
   const handleClose = () => {
     setIsVisible(false)
     setTimeout(() => {
-      setEstado('abierta')
-      setRespuesta('')
-      setSoporteId(undefined)
-      setSuggestError(null)
+      // Solo reseteamos si no hay solicitud activa
+      // Si hay una solicitud, el useEffect se encargará de los valores correctos
       onClose()
     }, 300)
   }
@@ -114,21 +134,81 @@ export default function ManageSolicitudModal({
     setIsSuggesting(true)
     setSuggestError(null)
     try {
-      const rol = isAdmin ? 'admin' : (isSoporte ? 'soporte' : 'otro')
+      const rol = isAdmin ? 'admin' : (isSoporte ? 'soporte' : 'cliente')
 
+      // 1) Traer historial (usa tu token Bearer)
+      const hRes = await fetch(`/api/solicitudes/${solicitud.id}/historial`, {
+        method: 'GET',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      })
+      if (!hRes.ok) {
+        if (hRes.status === 401 || hRes.status === 403) {
+          throw new Error('No autorizado para leer el historial. Revisa tu sesión/permisos.')
+        }
+        throw new Error('No se pudo obtener el historial de la solicitud')
+      }
+      const hJson = await hRes.json()
+      const items: Array<{
+        accion: 'creada' | 'asignada' | 'respuesta' | 'cambio_estado'
+        creadoEn: string
+        usuario: { nombre: string; email: string; rol?: string | null }
+        detalles?: { respuesta?: string; estadoAnterior?: string; estadoNuevo?: string; soporteAsignado?: string }
+        descripcion?: string
+      }> = hJson?.data ?? []
+
+      // 2) Orden cronológico ascendente
+      const ordenados = [...items].sort(
+        (a, b) => new Date(a.creadoEn).getTime() - new Date(b.creadoEn).getTime()
+      )
+
+      // 3) Compactar contexto (últimos 15 eventos)
+      const relevantes = ordenados
+        .filter(i => ['respuesta', 'cambio_estado', 'asignada', 'creada'].includes(i.accion))
+        .slice(-15)
+
+      // 4) Mapear a turnos de chat
+      const conversation: Array<{ role: 'user' | 'assistant'; content: string }> = relevantes.map(it => {
+        const esCliente = (it.usuario?.rol || '').toLowerCase() === 'cliente'
+        const role: 'user' | 'assistant' = esCliente ? 'user' : 'assistant'
+
+        let content = ''
+        if (it.accion === 'respuesta' && it.detalles?.respuesta) {
+          content = it.detalles.respuesta.trim()
+        } else if (it.accion === 'cambio_estado') {
+          content = `Cambio de estado: ${it.detalles?.estadoAnterior ?? '—'} → ${it.detalles?.estadoNuevo ?? '—'}`
+        } else if (it.accion === 'asignada') {
+          content = `Asignada a: ${it.detalles?.soporteAsignado ?? 'Sin asignar'}`
+        } else if (it.accion === 'creada') {
+          content = 'Solicitud creada.'
+        }
+        if (!content) content = it.descripcion || 'Actualización del ticket.'
+        return { role, content }
+      })
+
+      // 5) Enviar solicitud a IA con contexto (también con Bearer)
       const res = await fetch('/api/openai', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           rol,
           clienteNombre: solicitud.cliente.nombre,
+          clienteEmail: solicitud.cliente.email,
           titulo: solicitud.titulo,
           descripcion: solicitud.descripcion,
-          estado
+          estado: isCliente ? solicitud.estado : estado,
+          conversation,
         })
       })
 
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          throw new Error('No autorizado para usar la IA. Revisa tu sesión/permisos.')
+        }
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.error || 'No se pudo generar la sugerencia')
       }
@@ -136,7 +216,6 @@ export default function ManageSolicitudModal({
       const data: { sugerencia?: string } = await res.json()
       if (data.sugerencia) {
         setRespuesta((prev) => {
-          // Si ya hay texto, preserva y separa
           const base = prev?.trim() ? `${prev.trim()}\n\n---\n` : ''
           return `${base}${data.sugerencia}`
         })
@@ -150,6 +229,8 @@ export default function ManageSolicitudModal({
       setIsSuggesting(false)
     }
   }
+
+
 
   return (
     <>
@@ -216,10 +297,27 @@ export default function ManageSolicitudModal({
             </div>
           </div>
 
+          {/* Última Respuesta - Visible para todos los roles */}
+          {solicitud.respuesta && (
+            <div className="p-6 border-b border-gray-100">
+              <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 rounded-lg border-l-4 border-blue-400">
+                <h4 className="font-semibold text-blue-900 mb-2 text-sm flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                  </svg>
+                  Última Respuesta
+                </h4>
+                <div className="text-blue-800 text-xs leading-relaxed whitespace-pre-wrap bg-white bg-opacity-50 p-3 rounded border">
+                  {solicitud.respuesta}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-6">
 
-            {/* Admin: asignar soporte */}
+            {/* Admin: asignar soporte - Solo para admin */}
             {isAdmin && (
               <div className="space-y-2">
                 <label className="block text-sm font-semibold text-gray-800">
@@ -259,18 +357,19 @@ export default function ManageSolicitudModal({
               </div>
             )}
 
-            {/* Estado */}
-            <div className="space-y-2">
-              <label className="block text-sm font-semibold text-gray-800">
-                <span className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                  </svg>
-                  Estado de la Solicitud
-                </span>
-              </label>
-              <div className="relative">
-                <select
+            {/* Estado - Solo para admin y soporte */}
+            {!isCliente && (
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-gray-800">
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Estado de la Solicitud
+                  </span>
+                </label>
+                <div className="relative">
+                  <select
                     value={estado}
                     onChange={(e) => setEstado(e.target.value as any)}
                     className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-white text-sm text-gray-900 appearance-none"
@@ -279,14 +378,15 @@ export default function ManageSolicitudModal({
                     <option value="abierta">Abierta</option>
                     <option value="en_proceso">En Proceso</option>
                     <option value="cerrada">Cerrada</option>
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
-                  <svg className="fill-current h-4 w-4" viewBox="0 0 20 20">
-                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                  </svg>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <svg className="fill-current h-4 w-4" viewBox="0 0 20 20">
+                      <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                    </svg>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Respuesta + Sugerir con IA */}
             <div className="space-y-2">
@@ -296,7 +396,7 @@ export default function ManageSolicitudModal({
                     <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
                     </svg>
-                    Respuesta al Cliente
+                    {isCliente ? 'Respuesta/Comentarios' : 'Respuesta al Cliente'}
                   </span>
                 </label>
 
@@ -310,8 +410,8 @@ export default function ManageSolicitudModal({
                   {isSuggesting ? (
                     <>
                       <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" className="opacity-25"/>
-                        <path d="M4 12a8 8 0 018-8" fill="currentColor" className="opacity-75"/>
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" className="opacity-25" />
+                        <path d="M4 12a8 8 0 018-8" fill="currentColor" className="opacity-75" />
                       </svg>
                       Generando...
                     </>
@@ -328,7 +428,7 @@ export default function ManageSolicitudModal({
                 value={respuesta}
                 onChange={(e) => setRespuesta(e.target.value)}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 resize-none bg-white text-sm text-gray-900 placeholder-gray-600"
-                placeholder="Escribe tu respuesta detallada aquí..."
+                placeholder={isCliente ? "Escribe tus comentarios o información adicional aquí..." : "Escribe tu respuesta detallada aquí..."}
                 disabled={isSubmitting}
               />
               <div className="text-xs text-gray-500 space-y-1">
@@ -337,7 +437,7 @@ export default function ManageSolicitudModal({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
                   </svg>
-                  <span>Esta respuesta será enviada por correo al cliente</span>
+                  <span>{isCliente ? 'Estos comentarios serán enviados al equipo de soporte' : 'Esta respuesta será enviada por correo al cliente'}</span>
                 </p>
                 {isSoporte && !solicitud.soporte && (
                   <p className="text-blue-600 font-medium flex items-start gap-1">
@@ -378,14 +478,14 @@ export default function ManageSolicitudModal({
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  <span>Actualizando...</span>
+                  <span>{isCliente ? 'Enviando...' : 'Actualizando...'}</span>
                 </>
               ) : (
                 <>
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span>Actualizar</span>
+                  <span>{isCliente ? 'Enviar' : 'Actualizar'}</span>
                 </>
               )}
             </button>

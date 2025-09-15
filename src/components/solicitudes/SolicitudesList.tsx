@@ -21,6 +21,7 @@ interface SolicitudesListProps {
   userRole: string
   onGestionar: (solicitud: Solicitud) => void
   onNuevaSolicitud: () => void
+  onVerHistorial: (id: number) => void
 }
 
 interface Filtros {
@@ -31,7 +32,6 @@ interface Filtros {
   estado: string
 }
 
-/* Hook simple para detectar móvil */
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(false)
   useEffect(() => {
@@ -49,7 +49,8 @@ export default function SolicitudesList({
   solicitudes,
   userRole,
   onGestionar,
-  onNuevaSolicitud
+  onNuevaSolicitud,
+  onVerHistorial
 }: SolicitudesListProps) {
   const [filtros, setFiltros] = useState<Filtros>({
     fechaDesde: '',
@@ -88,7 +89,6 @@ export default function SolicitudesList({
     }
   }
 
-  /* ---- Filtro con moment ---- */
   const solicitudesFiltradas = useMemo(() => {
     return solicitudes.filter((s) => {
       const fechaS = moment(s.creadoEn)
@@ -114,7 +114,6 @@ export default function SolicitudesList({
     })
   }, [solicitudes, filtros])
 
-  /* ---- Columnas de la DataTable ---- */
   const EstadoPill = ({ estado }: { estado: Solicitud['estado'] }) => (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getEstadoColor(estado)}`}>
       {getEstadoText(estado)}
@@ -127,7 +126,6 @@ export default function SolicitudesList({
     </span>
   )
 
-  // Escritorio
   const desktopCols: TableColumn<Solicitud>[] = [
     { name: 'ID', selector: r => r.id, sortable: true, width: '80px', cell: r => <span className="font-medium">#{r.id}</span> },
     { name: 'Estado', selector: r => r.estado, sortable: true, cell: r => <EstadoPill estado={r.estado} /> },
@@ -150,38 +148,72 @@ export default function SolicitudesList({
     },
     { name: 'Creado', selector: r => r.creadoEn, sortable: true, cell: r => <FechaCell value={r.creadoEn} /> },
     {
-      name: 'Acciones', cell: r => (
-        <button
-          onClick={() => onGestionar(r)}
-          className="inline-flex items-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-xs sm:text-sm font-medium text-white hover:bg-slate-800"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        </button>
+      name: 'Acciones',
+      cell: r => (
+        <div className="flex items-center justify-end gap-2">
+          {userRole !== 'cliente' && (
+            <div>
+              <button
+                onClick={() => onVerHistorial(r.id)}  // <-- antes: data.id
+                className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium hover:bg-gray-50"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" />
+                </svg>
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => onGestionar(r)}
+            className="inline-flex items-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-xs sm:text-sm font-medium text-white hover:bg-slate-800"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+        </div>
       ),
       ignoreRowClick: true,
     }
+
+
   ]
 
   const mobileCols: TableColumn<Solicitud>[] = [
     { name: 'ID', selector: r => r.id, width: '64px', cell: r => <span className="font-medium">#{r.id}</span> },
     { name: 'Título', selector: r => r.titulo, grow: 2, wrap: true },
     {
-      name: '', cell: r => (
-        <button
-          onClick={() => onGestionar(r)}
-          className="rounded-md bg-gray-700 px-3 py-1.5 text-xs font-medium text-white"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        </button>
+      name: '',
+      cell: r => (
+        <div className="flex items-center justify-end gap-2">
+          {userRole !== 'cliente' && (
+            <div>
+              <button
+                onClick={() => onVerHistorial(data.id)}
+                className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium hover:bg-gray-50"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" />
+                </svg>
+                
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => onGestionar(r)}
+            className="rounded-md bg-gray-700 px-2.5 py-1.5 text-xs font-medium text-white"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+        </div>
       ),
       ignoreRowClick: true,
     }
+
   ]
 
   const columns = isMobile ? mobileCols : desktopCols
@@ -219,6 +251,17 @@ export default function SolicitudesList({
           <p className="leading-relaxed text-slate-800">{data.respuesta}</p>
         </div>
       )}
+      <div>
+        <button
+          onClick={() => onVerHistorial(data.id)}
+          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium hover:bg-gray-50"
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M12 22a10 10 0 100-20 10 10 0 000 20z" />
+          </svg>
+          Ver historial de cambios
+        </button>
+      </div>
     </div>
   )
 
@@ -322,7 +365,6 @@ export default function SolicitudesList({
         </div>
       </div>
 
-      {/* Tabla */}
       <div className="px-10 py-6">
         <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
           <div className="overflow-x-auto">

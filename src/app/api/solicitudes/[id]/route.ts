@@ -5,20 +5,76 @@ import { prisma } from '@/lib/db'
 import { requireRole } from '@/lib/requireAuth'
 import { notifyEmailChange } from '@/lib/emailService'
 
+/** ========= Zod ========= **/
 const UpdateSchema = z.object({
   estado: z.enum(['abierta', 'en_proceso', 'cerrada']).optional(),
   respuesta: z.string().max(2000, 'Respuesta muy larga').optional(),
   soporteId: z.number().int().optional(),
 })
 
+/** ========= Helpers ========= **/
+type Accion = 'creada' | 'asignada' | 'respuesta' | 'cambio_estado'
+
+function mapHistorialItem(h: {
+  id: number
+  campo: string
+  valorAnterior: string | null
+  valorNuevo: string | null
+  fecha: Date
+  autor: { nombre: string; email: string; rol?: { nombre: string } | null }
+}) {
+  let accion: Accion = 'respuesta'
+  let descripcion = ''
+  const detalles: {
+    estadoAnterior?: string
+    estadoNuevo?: string
+    respuesta?: string
+    soporteAsignado?: string
+  } = {}
+
+  switch (h.campo) {
+    case 'estado':
+      accion = 'cambio_estado'
+      descripcion = `Estado cambiado de ${h.valorAnterior ?? '—'} a ${h.valorNuevo ?? '—'}`
+      detalles.estadoAnterior = h.valorAnterior ?? undefined
+      detalles.estadoNuevo = h.valorNuevo ?? undefined
+      break
+    case 'respuesta':
+      accion = 'respuesta'
+      descripcion = 'Se registró/actualizó una respuesta'
+      detalles.respuesta = h.valorNuevo ?? undefined
+      break
+    case 'soporte_asignado':
+      accion = 'asignada'
+      descripcion = `Solicitud asignada a ${h.valorNuevo ?? 'Sin asignar'}`
+      detalles.soporteAsignado = h.valorNuevo ?? undefined
+      break
+    default:
+      accion = 'respuesta'
+      descripcion = `Cambio en ${h.campo}`
+  }
+
+  return {
+    id: h.id,
+    accion,
+    descripcion,
+    creadoEn: h.fecha.toISOString(),
+    usuario: {
+      nombre: h.autor.nombre,
+      email: h.autor.email,
+      rol: h.autor.rol?.nombre, 
+    },
+    detalles,
+  }
+}
+
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Solo soporte y admin pueden actualizar solicitudes
-  const authResult = requireRole(req, ['soporte', 'admin'])
+  const authResult = requireRole(req, ['soporte', 'admin', 'cliente'])
   if (authResult instanceof NextResponse) return authResult
   const { user } = authResult
 
   try {
-    // Await params before accessing its properties
     const { id: paramId } = await params
     const id = Number(paramId)
     if (isNaN(id)) {
@@ -64,7 +120,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         )
       }
       
-      // Si es soporte y está respondiendo/actualizando una solicitud sin asignar, se asigna automáticamente
+      // Si responde/actualiza una solicitud sin asignar, se autoasigna
       if (!solicitudActual.soporteId && (data.respuesta || data.estado)) {
         data.soporteId = user.id
       }
@@ -81,7 +137,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     })
 
     // Crear registros de historial para cada cambio
-    const historialPromises = []
+    const historialPromises: Promise<any>[] = []
 
     if (data.estado && data.estado !== solicitudActual.estado) {
       historialPromises.push(
@@ -129,20 +185,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       )
     }
 
-    // Ejecutar todas las inserciones de historial
     if (historialPromises.length > 0) {
       await Promise.all(historialPromises)
     }
 
-    // 📧 ENVIAR NOTIFICACIONES POR EMAIL 📧
+    // 📧 Notificaciones por email (no bloquea)
     try {
-      // Verificar si hay cambios que ameriten notificación
       const hayaCambiosSignificativos = data.estado || data.respuesta || data.soporteId
 
       if (hayaCambiosSignificativos) {
-        // Determinar el tipo de notificación según el estado
         if (data.estado === 'cerrada') {
-          // Solicitud cerrada - notificación especial
           await notifyEmailChange('closed', {
             clienteEmail: updated.cliente.email,
             clienteNombre: updated.cliente.nombre,
@@ -153,7 +205,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           })
           console.log('📧 Email de solicitud cerrada enviado al cliente')
         } else {
-          // Actualización general (estado, respuesta o asignación)
           await notifyEmailChange('updated', {
             clienteEmail: updated.cliente.email,
             clienteNombre: updated.cliente.nombre,
@@ -168,8 +219,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }
     } catch (emailError) {
       console.error('📧 Error enviando notificación por email:', emailError)
-      // No fallar la operación principal por error de email
-      // El sistema continuará funcionando aunque falle el email
     }
 
     return NextResponse.json({ ok: true, data: updated })
@@ -189,13 +238,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
+/** ========= GET ========= **/
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authResult = requireRole(req, ['cliente', 'soporte', 'admin'])
   if (authResult instanceof NextResponse) return authResult
   const { user } = authResult
 
   try {
-    // Await params before accessing its properties
     const { id: paramId } = await params
     const id = Number(paramId)
     if (isNaN(id)) {
@@ -212,7 +261,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         soporte: { select: { nombre: true, email: true } },
         historial: {
           include: {
-            autor: { select: { nombre: true, email: true } }
+            autor: { 
+              select: { 
+                nombre: true, 
+                email: true,
+                rol: { select: { nombre: true } } // <- traemos el rol del autor
+              } 
+            }
           },
           orderBy: { fecha: 'desc' }
         }
@@ -226,7 +281,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       )
     }
 
-    // Verificar permisos de acceso
+    // Permisos de acceso
     if (user.rol === 'cliente' && solicitud.clienteId !== user.id) {
       return NextResponse.json(
         { ok: false, error: 'No tienes permiso para ver esta solicitud' },
@@ -241,7 +296,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       )
     }
 
-    return NextResponse.json({ ok: true, data: solicitud })
+    // ====== Mapeo del historial al shape del modal ======
+    const historialUI = solicitud.historial.map(mapHistorialItem)
+
+    // Puedes devolver todo junto, manteniendo las claves que tu UI ya usa
+    const payload = {
+      id: solicitud.id,
+      titulo: solicitud.titulo,
+      descripcion: solicitud.descripcion,
+      estado: solicitud.estado as 'abierta' | 'en_proceso' | 'cerrada',
+      creadoEn: solicitud.creadoEn.toISOString(),
+      cliente: solicitud.cliente,
+      soporte: solicitud.soporte ?? undefined,
+      respuesta: solicitud.respuesta ?? undefined,
+      historial: historialUI,
+    }
+
+    return NextResponse.json({ ok: true, data: payload })
   } catch (error: any) {
     console.error('Error al obtener solicitud:', error)
     return NextResponse.json(
