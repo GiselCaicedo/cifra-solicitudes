@@ -18,10 +18,11 @@ export async function GET(req: NextRequest) {
     }
 
     // Obtener fechas para cálculos temporales
-    const hoy = new Date()
-    const inicioHoy = new Date(hoy.setHours(0, 0, 0, 0))
-    const inicioSemana = new Date(hoy.setDate(hoy.getDate() - hoy.getDay()))
-    const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+    const ahora = new Date()
+    const inicioHoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
+    const inicioSemana = new Date(ahora.setDate(ahora.getDate() - ahora.getDay()))
+    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1)
+    const inicio30Dias = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 
     // Consultas básicas
     const [abiertas, enProceso, cerradas, total] = await Promise.all([
@@ -41,7 +42,9 @@ export async function GET(req: NextRequest) {
         roles, 
         solicitudesHoy,
         solicitudesSemana,
-        solicitudesMes
+        solicitudesMes,
+        solicitudesRecientes,
+        solicitudesUltimos30Dias
       ] = await Promise.all([
         // Solicitudes sin asignar
         prisma.solicitud.count({ where: { soporteId: null } }),
@@ -76,20 +79,41 @@ export async function GET(req: NextRequest) {
           where: {
             creadoEn: { gte: inicioMes }
           }
+        }),
+
+        prisma.solicitud.count({
+          where: {
+            estado: { in: ['abierta', 'en_proceso'] },
+            creadoEn: { 
+              gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
+            }
+          }
+        }),
+
+        prisma.solicitud.findMany({
+          where: {
+            creadoEn: { gte: inicio30Dias }
+          },
+          select: {
+            id: true,
+            estado: true,
+            creadoEn: true,
+            clienteId: true,
+            soporteId: true
+          }
         })
       ])
 
-      // Calcular tiempo promedio de respuesta (simplificado)
       const solicitudesCerradasRecientes = await prisma.solicitud.findMany({
         where: {
           estado: 'cerrada',
-          creadoEn: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } // últimos 30 días
+          creadoEn: { gte: inicio30Dias }
         },
         select: {
           creadoEn: true,
           actualizadoEn: true
         },
-        take: 100 // Limitar para mejor performance
+        take: 100 
       })
 
       const tiempoPromedioHoras = solicitudesCerradasRecientes.length > 0 
@@ -99,7 +123,6 @@ export async function GET(req: NextRequest) {
           }, 0) / solicitudesCerradasRecientes.length
         : 0
 
-      // Agregar nombres de roles a los conteos
       const usuariosPorRol = usuariosGrouped.map(grupo => {
         const rol = roles.find(r => r.id === grupo.rolId)
         return {
@@ -109,7 +132,6 @@ export async function GET(req: NextRequest) {
         }
       })
 
-      // Obtener usuarios de soporte para estadísticas
       const rolSoporte = roles.find(r => r.nombre.toLowerCase().includes('soporte'))
       let soporteActivo = []
       
@@ -122,8 +144,7 @@ export async function GET(req: NextRequest) {
             id: true,
             nombre: true,
             email: true
-          },
-          take: 5
+          }
         })
 
         // Contar solicitudes por usuario de soporte
@@ -143,15 +164,58 @@ export async function GET(req: NextRequest) {
         )
       }
 
-      // Solicitudes recientes (últimas 24 horas)
-      const solicitudesRecientes = await prisma.solicitud.count({
-        where: {
-          estado: { in: ['abierta', 'en_proceso'] },
-          creadoEn: { 
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
-          }
-        }
+      // Análisis de tendencias por cliente (top 5)
+      const solicitudesPorCliente = await prisma.solicitud.groupBy({
+        by: ['clienteId'],
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+        take: 5
       })
+
+      const clientesConNombres = await Promise.all(
+        solicitudesPorCliente.map(async (item) => {
+          const cliente = await prisma.usuario.findUnique({
+            where: { id: item.clienteId },
+            select: { nombre: true, email: true }
+          })
+          return {
+            clienteId: item.clienteId,
+            cliente: cliente?.nombre || 'Desconocido',
+            email: cliente?.email || '',
+            solicitudes: item._count.id
+          }
+        })
+      )
+
+      // Análisis temporal más detallado - últimos 7 días
+      const fechasUltimos7Dias = Array.from({ length: 7 }, (_, i) => {
+        const fecha = new Date()
+        fecha.setDate(fecha.getDate() - (6 - i))
+        fecha.setHours(0, 0, 0, 0)
+        return fecha
+      })
+
+      const solicitudesPorDia = await Promise.all(
+        fechasUltimos7Dias.map(async (fecha) => {
+          const siguienteDia = new Date(fecha)
+          siguienteDia.setDate(siguienteDia.getDate() + 1)
+          
+          const count = await prisma.solicitud.count({
+            where: {
+              creadoEn: {
+                gte: fecha,
+                lt: siguienteDia
+              }
+            }
+          })
+          
+          return {
+            fecha: fecha.toISOString().split('T')[0],
+            dia: fecha.toLocaleDateString('es-ES', { weekday: 'short' }),
+            solicitudes: count
+          }
+        })
+      )
 
       estadisticasExtras = {
         sinAsignar,
@@ -162,12 +226,22 @@ export async function GET(req: NextRequest) {
         usuariosPorRol,
         tiempoPromedioRespuesta: Math.round(tiempoPromedioHoras * 100) / 100,
         soporteActivo: soporteActivo.sort((a, b) => b.solicitudesAtendidas - a.solicitudesAtendidas),
+        clientesActivos: clientesConNombres,
+        tendenciaDiaria: solicitudesPorDia,
         metricas: {
           tasaResolucion: total > 0 ? Math.round((cerradas / total) * 100) : 0,
           cargaTrabajo: abiertas + enProceso,
           eficienciaDiaria: solicitudesHoy,
           tendenciaSemanal: solicitudesSemana,
-          rendimientoMensual: solicitudesMes
+          rendimientoMensual: solicitudesMes,
+          promedioRespuesta: tiempoPromedioHoras,
+          solicitudesActivas: abiertas + enProceso,
+          solicitudesPendientes: sinAsignar
+        },
+        distribucionEstados: {
+          abierta: abiertas,
+          en_proceso: enProceso,
+          cerrada: cerradas
         }
       }
     } else if (user.rol === 'soporte') {
